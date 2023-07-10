@@ -1,3 +1,10 @@
+@description('Optional. Specify the kind of connection.')
+@allowed([
+  'ConsumptionLogicApp'
+  'StandardLogicApp'
+])
+param kind string = 'ConsumptionLogicApp'
+
 @description('Optional. Specific values for some API connections.')
 param api object = {}
 
@@ -20,9 +27,19 @@ param location string = resourceGroup().location
 #disable-next-line secure-secrets-in-params // Not a secret
 param nonSecretParameterValues object = {}
 
-@description('Optional. Connection strings or access keys for connection. Example: \'accountName\' and \'accessKey\' when using blobs.  It can change depending on the resource.')
+@description('Optional. Connection secure paramater type')
+@allowed([
+  ''
+  'Alternative'
+])
+param parameterValueType string = ''
+
+@description('Optional. Connection strings or access keys for connection. Example: \'accountName\' and \'accessKey\' when using blobs. It can change depending on the resource. If \'parameterValueSet\' is Alternative this paramater becomes \'alternativeParameterValues\'.')
 @secure()
 param parameterValues object = {}
+
+@description('Optional. Multi-authentication ')
+param parameterValueSet object = {}
 
 @description('Optional. Array of role assignment objects that contain the \'roleDefinitionIdOrName\' and \'principalId\' to define RBAC role assignments on this resource. In the roleDefinitionIdOrName attribute, you can provide either the display name of the role definition, or its fully qualified ID in the following format: \'/providers/Microsoft.Authorization/roleDefinitions/c2f4ef07-c644-48eb-af81-4b1b4947fb11\'.')
 param roleAssignments array = []
@@ -56,19 +73,40 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2021-04-01' = if (ena
   }
 }
 
+var connectionParameters = union(
+  // Reference: https://github.com/Azure/LogicAppsUX/blob/f1681c59ebeb95da98f07afb05fc52e7d7943aad/libs/services/designer-client-services/src/lib/base/connection.ts#L130-L132
+  parameterValueType == 'Alternative' ? {
+    parameterValueType: 'Alternative'
+    alternativeParameterValues: !empty(parameterValues) ? parameterValues : null
+  } : {},
+
+  // Reference: https://github.com/Azure/LogicAppsUX/blob/f1681c59ebeb95da98f07afb05fc52e7d7943aad/libs/services/designer-client-services/src/lib/base/connection.ts#L151-L166
+  parameterValueType == '' && !empty(parameterValueSet) ? {
+    parameterValueSet: parameterValueSet
+  } : {},
+  parameterValueType == '' && empty(parameterValueSet) ? {
+    parameterValues: parameterValues
+  } : {}
+)
+
+// May need to use 2018-07-01-preview - which is undocumented but utilzied by sample in docs AND vscode extension
 resource connection 'Microsoft.Web/connections@2016-06-01' = {
   name: name
   location: location
   tags: tags
-  properties: {
-    displayName: displayName
-    customParameterValues: customParameterValues
-    api: api
-    parameterValues: !empty(parameterValues) ? parameterValues : null
-    nonSecretParameterValues: !empty(nonSecretParameterValues) ? nonSecretParameterValues : null
-    testLinks: !empty(testLinks) ? testLinks : null
-    statuses: !empty(statuses) ? statuses : null
-  }
+  // Kind Reference: https://github.com/Azure/LogicAppsUX/blob/f1681c59ebeb95da98f07afb05fc52e7d7943aad/libs/services/designer-client-services/src/lib/base/connection.ts#L53
+  #disable-next-line BCP187
+  kind: kind == 'StandardLogicApp' ? 'V2' : 'V1'
+  properties: union({
+      displayName: displayName
+      customParameterValues: customParameterValues
+      api: api
+      nonSecretParameterValues: !empty(nonSecretParameterValues) ? nonSecretParameterValues : null
+      testLinks: !empty(testLinks) ? testLinks : null
+      statuses: !empty(statuses) ? statuses : null
+    },
+    connectionParameters
+  )
 }
 
 resource connection_lock 'Microsoft.Authorization/locks@2020-05-01' = if (!empty(lock)) {
